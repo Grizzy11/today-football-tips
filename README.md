@@ -1,124 +1,105 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Today Football Tips</title>
-  <style>
-    /* Reset */
-    body, html {
-      height: 100%;
-      margin: 0;
-      font-family: "Segoe UI", Arial, sans-serif;
-    }
+#!/usr/bin/env python3
+import requests
+from telegram import Bot
+import datetime
 
-    /* Animated gradient background */
-    body {
-      background: linear-gradient(-45deg, #0b3d0b, #134d13, #1a601a, #0f440f);
-      background-size: 400% 400%;
-      animation: gradientFlow 15s ease infinite;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      flex-direction: column;
-      text-align: center;
-      color: #fff;
-    }
+# Bot setup
+TELEGRAM_TOKEN = "8436380315:AAGB4kldLn3-53v3T7heHHFvu2a5FGVCGK0"
+CHANNEL_ID = "@Todayfootball_tips"
 
-    @keyframes gradientFlow {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
+bot = Bot(token=TELEGRAM_TOKEN)
 
-    .container {
-      max-width: 480px;
-      padding: 20px;
-    }
+# Get today fixtures from SofaScore
+def scrape_matches():
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    url = f"https://www.sofascore.com/api/v1/sport/football/scheduled-events/{today}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        return []
 
-    img {
-      max-width: 220px;
-      margin-bottom: 20px;
-    }
+    data = response.json()
+    matches = []
+    for event in data.get("events", []):
+        match = {
+            "id": event["id"],
+            "home": event["homeTeam"]["name"],
+            "away": event["awayTeam"]["name"]
+        }
+        matches.append(match)
+    return matches
 
-    h1 {
-      font-size: 30px;
-      margin-bottom: 10px;
-      font-weight: 600;
-    }
+# Get odds for a match
+def get_odds(event_id):
+    url = f"https://www.sofascore.com/api/v1/event/{event_id}/odds/1/all"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        return None
 
-    p {
-      font-size: 17px;
-      margin-bottom: 30px;
-      color: #ddd;
-    }
+    data = response.json()
+    markets = data.get("markets", [])
+    for market in markets:
+        if market["marketName"] == "Match Winner":
+            outcomes = market["outcomes"]
+            return {
+                "home": outcomes[0]["value"],
+                "draw": outcomes[1]["value"],
+                "away": outcomes[2]["value"]
+            }
+    return None
 
-    a.button {
-      display: inline-block;
-      background: #ffcc00;
-      color: #000;
-      padding: 14px 36px;
-      border-radius: 6px;
-      text-decoration: none;
-      font-weight: bold;
-      font-size: 18px;
-      box-shadow: 0 0 10px rgba(255, 204, 0, 0.7);
-      animation: pulse 2s infinite;
-      transition: 0.2s;
-    }
+# Pick predictions until ~20 odds
+def pick_predictions(matches):
+    predictions = []
+    total_odds = 1.0
 
-    a.button:hover {
-      background: #e6b800;
-      box-shadow: 0 0 20px rgba(255, 204, 0, 1);
-    }
+    for match in matches:
+        odds = get_odds(match["id"])
+        if not odds:
+            continue
 
-    @keyframes pulse {
-      0% {
-        transform: scale(1);
-        box-shadow: 0 0 10px rgba(255, 204, 0, 0.6);
-      }
-      50% {
-        transform: scale(1.05);
-        box-shadow: 0 0 20px rgba(255, 204, 0, 1);
-      }
-      100% {
-        transform: scale(1);
-        box-shadow: 0 0 10px rgba(255, 204, 0, 0.6);
-      }
-    }
+        # Pick safer option (lower odd)
+        if odds["home"] <= odds["away"]:
+            tip = f"⚽ <b>{match['home']} vs {match['away']}</b>\n👉 Tip: {match['home']} Win @ {odds['home']}"
+            total_odds *= odds["home"]
+        else:
+            tip = f"⚽ <b>{match['home']} vs {match['away']}</b>\n👉 Tip: {match['away']} Win @ {odds['away']}"
+            total_odds *= odds["away"]
 
-    footer {
-      margin-top: 40px;
-      font-size: 13px;
-      color: #aaa;
-    }
+        predictions.append(tip)
 
-    /* Mobile-first button */
-    @media (max-width: 600px) {
-      a.button {
-        display: block;
-        width: 100%;
-        padding: 16px;
-        font-size: 20px;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <!-- Replace with your uploaded GitHub image URL -->
-    <img src="YOUR_IMAGE_URL_HERE" alt="Today Football Tips Logo">
+        if total_odds >= 20:
+            break
 
-    <h1>Today Football Tips</h1>
-    <p>Get reliable football insights and updates daily.  
-       Join our official Telegram channel below:</p>
+    return predictions, total_odds
 
-    <a href="https://t.me/Todayfootball_tips" target="_blank" class="button">👉 Join Telegram</a>
+def post_to_telegram():
+    matches = scrape_matches()
+    if not matches:
+        bot.send_message(chat_id=CHANNEL_ID, text="⚠️ No matches found today.")
+        return
 
-    <footer>
-      <p>© 2025 Today Football Tips. All rights reserved.<br>
-      This page is for informational purposes only.</p>
-    </footer>
-  </div>
-</body>
-</html>
+    tips, total_odds = pick_predictions(matches)
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+
+    message = f"🔥 <b>Today’s Football Tips ({today})</b> 🔥\n\n"
+    message += "\n\n".join(tips)
+    message += f"\n\n📊 <b>Total Odds ≈ {round(total_odds, 2)}</b>\n\n"
+    message += "💡 Bet smart. Good luck! 🍀"
+
+    # ✅ Unpin previous message (if any)
+    try:
+        bot.unpin_all_chat_messages(chat_id=CHANNEL_ID)
+    except Exception as e:
+        print("⚠️ No old pin to remove:", e)
+
+    # ✅ Send today’s tips
+    sent = bot.send_message(chat_id=CHANNEL_ID, text=message, parse_mode="HTML")
+
+    # ✅ Pin today’s message
+    bot.pin_chat_message(chat_id=CHANNEL_ID, message_id=sent.message_id, disable_notification=True)
+
+if __name__ == "__main__":
+    post_to_telegram()
+    print("✅ Daily tips posted, old pin cleared, new pin set.")
